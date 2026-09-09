@@ -13,7 +13,9 @@ export type GestureType =
   | 'pinch'
   | 'swipe_right'
   | 'swipe_left'
-  | 'pointing';
+  | 'pointing'
+  | 'one_finger'
+  | 'peace_sign';
 
 export interface GestureDetectionResult {
   gesture: GestureType;
@@ -25,3 +27,11 @@ export interface GestureDetectionResult {
   openness: number; // 0 (fist) to 1 (wide open)
   lastAction?: string;
 }
+
+export interface User {
+  username: string;
+  name?: string;
+  registeredAt: string;
+}
+
+export type ActiveSection = 'shapes' | 'numbers' | 'animals';

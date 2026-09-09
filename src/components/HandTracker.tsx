@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { GestureDetectionResult } from '../types';
-import { Camera, CameraOff, Sparkles, MoveRight, MoveLeft, Hand, AlertCircle } from 'lucide-react';
+import { Camera, CameraOff, AlertCircle, MoveRight, MoveLeft } from 'lucide-react';
 
 interface HandTrackerProps {
   onGesture: (result: GestureDetectionResult) => void;
   onNextShape: () => void;
-  onPrevShape: () => void;
+  onPrevShape?: () => void;
   enabled: boolean;
   onToggleEnabled: () => void;
 }
@@ -25,25 +25,50 @@ export const HandTracker: React.FC<HandTrackerProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [currentGestureName, setCurrentGestureName] = useState<string>('Esperando mano...');
-  const [swipeFeedback, setSwipeFeedback] = useState<'right' | 'left' | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<{
+    label: string;
+    icon: string;
+    direction: 'next' | 'prev';
+  } | null>(null);
   const [isHandPresent, setIsHandPresent] = useState(false);
 
-  // Position tracking for swipe detection
+  // History tracking for slide/swipe gesture detection
   const historyRef = useRef<{ x: number; time: number }[]>([]);
-  const lastSwipeTimeRef = useRef<number>(0);
-  const swipeCooldown = 800; // ms
+  const lastActionTimeRef = useRef<number>(0);
+  const actionCooldown = 650; // ms between transitions
 
-  // Check and trigger swipe gestures
-  const checkSwipe = useCallback((x: number, now: number) => {
+  const triggerNext = useCallback((label: string, icon: string) => {
+    const now = performance.now();
+    if (now - lastActionTimeRef.current < actionCooldown) return;
+    lastActionTimeRef.current = now;
+    historyRef.current = [];
+    setActionFeedback({ label, icon, direction: 'next' });
+    onNextShape();
+    setTimeout(() => setActionFeedback(null), 650);
+  }, [onNextShape]);
+
+  const triggerPrev = useCallback((label: string, icon: string) => {
+    const now = performance.now();
+    if (now - lastActionTimeRef.current < actionCooldown) return;
+    lastActionTimeRef.current = now;
+    historyRef.current = [];
+    setActionFeedback({ label, icon, direction: 'prev' });
+    if (onPrevShape) {
+      onPrevShape();
+    }
+    setTimeout(() => setActionFeedback(null), 650);
+  }, [onPrevShape]);
+
+  // Check slide/swipe gesture across frame
+  const checkSlide = useCallback((x: number, now: number) => {
     const history = historyRef.current;
     history.push({ x, time: now });
 
-    // Keep history within last 400ms
-    while (history.length > 0 && now - history[0].time > 400) {
+    while (history.length > 0 && now - history[0].time > 350) {
       history.shift();
     }
 
-    if (now - lastSwipeTimeRef.current < swipeCooldown) {
+    if (now - lastActionTimeRef.current < actionCooldown) {
       return;
     }
 
@@ -53,21 +78,16 @@ export const HandTracker: React.FC<HandTrackerProps> = ({
       const deltaTime = (now - oldest.time) / 1000;
       const velocity = deltaX / (deltaTime || 0.001);
 
-      // In mirrored coordinates:
-      // moving hand to physical right means x goes from left to right (deltaX > 0.22)
-      if (deltaX > 0.25 || velocity > 1.2) {
-        lastSwipeTimeRef.current = now;
-        setSwipeFeedback('right');
-        onNextShape();
-        setTimeout(() => setSwipeFeedback(null), 700);
-      } else if (deltaX < -0.25 || velocity < -1.2) {
-        lastSwipeTimeRef.current = now;
-        setSwipeFeedback('left');
-        onPrevShape();
-        setTimeout(() => setSwipeFeedback(null), 700);
+      // Slide hand to the right -> Next shape/number
+      if (deltaX > 0.18 || velocity > 0.9) {
+        triggerNext('Siguiente (Deslizar 👉)', '👉');
+      }
+      // Slide hand to the left -> Previous shape/number
+      else if (deltaX < -0.18 || velocity < -0.9) {
+        triggerPrev('Anterior (Deslizar 👈)', '👈');
       }
     }
-  }, [onNextShape, onPrevShape]);
+  }, [triggerNext, triggerPrev]);
 
   // Initialize MediaPipe Hands
   useEffect(() => {
@@ -91,11 +111,19 @@ export const HandTracker: React.FC<HandTrackerProps> = ({
 
     const initMediaPipe = async () => {
       try {
+        // Poll gracefully until external MediaPipe scripts finish loading
+        let attempts = 0;
+        while ((!(window as any).Hands || !(window as any).Camera) && attempts < 40) {
+          if (!isMounted) return;
+          await new Promise((r) => setTimeout(r, 250));
+          attempts++;
+        }
+
         const HandsClass = (window as any).Hands;
         const CameraClass = (window as any).Camera;
 
         if (!HandsClass || !CameraClass) {
-          throw new Error('Bibliotecas de MediaPipe cargando. Por favor espere.');
+          throw new Error('No se pudieron cargar las bibliotecas de MediaPipe. Revisa tu conexión a internet.');
         }
 
         if (!videoRef.current) return;
@@ -166,13 +194,16 @@ export const HandTracker: React.FC<HandTrackerProps> = ({
             const landmarks = results.multiHandLandmarks[0];
             setIsHandPresent(true);
 
+            // Landmark distance helper
+            const dist = (p1: any, p2: any) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
+
             // Palm center / wrist
             const wrist = landmarks[0];
             const middleBase = landmarks[9];
             const handCenterX = 1 - (wrist.x + middleBase.x) / 2; // mirror
             const handCenterY = (wrist.y + middleBase.y) / 2;
 
-            // Compute distance from wrist to all 4 fingertips (8, 12, 16, 20)
+            // Distance from wrist to all 4 fingertips
             const tipIndices = [8, 12, 16, 20];
             let avgTipDist = 0;
             tipIndices.forEach((idx) => {
@@ -181,33 +212,41 @@ export const HandTracker: React.FC<HandTrackerProps> = ({
             });
             avgTipDist /= 4;
 
-            // Distance between thumb (4) and index tip (8)
-            const pinchDist = Math.hypot(
-              landmarks[4].x - landmarks[8].x,
-              landmarks[4].y - landmarks[8].y
-            );
+            // Pinch distance between thumb (4) and index tip (8)
+            const pinchDist = dist(landmarks[4], landmarks[8]);
+            const isPinch = pinchDist < 0.048;
 
-            // Openness metric (0.15 = tight fist, 0.45+ = wide open)
+            // Extension check for each finger compared to its PIP joint
+            const isMiddleExtended = dist(wrist, landmarks[12]) > dist(wrist, landmarks[10]) * 1.25;
+            const isRingExtended = dist(wrist, landmarks[16]) > dist(wrist, landmarks[14]) * 1.25;
+            const isPinkyExtended = dist(wrist, landmarks[20]) > dist(wrist, landmarks[18]) * 1.25;
+
+            // Openness metric (0 = tight fist, 1 = wide open)
             const openness = Math.min(Math.max((avgTipDist - 0.18) / 0.28, 0), 1);
 
-            // Check swipe motion with mirrored X
-            const now = performance.now();
-            checkSwipe(handCenterX, now);
+            // Check slide/swipe gesture across frame for shape/number transition
+            checkSlide(handCenterX, performance.now());
 
             let label = 'Mano detectada';
             let gestureType: GestureDetectionResult['gesture'] = 'none';
 
-            if (pinchDist < 0.055) {
-              label = '👌 Pellizco (Pinch)';
-              gestureType = 'pinch';
-            } else if (openness < 0.28) {
+            // GESTURE RECOGNITION:
+            // 1) Closed fist: Contract particles
+            if (openness < 0.26) {
               label = '✊ Puño (Contraer)';
               gestureType = 'fist';
-            } else if (openness > 0.65) {
+            }
+            // 2) Wide open hand: Expand particles
+            else if (openness > 0.65) {
               label = '🖐️ Abierta (Expandir)';
               gestureType = 'open_hand';
+            }
+            // 3) Pinch is passive
+            else if (isPinch) {
+              label = '👌 Pellizco';
+              gestureType = 'pinch';
             } else {
-              label = '👋 Mano neutral';
+              label = '👋 Mano detectada (Desliza para cambiar)';
             }
 
             setCurrentGestureName(label);
@@ -257,7 +296,18 @@ export const HandTracker: React.FC<HandTrackerProps> = ({
       } catch (err: any) {
         console.error('Error starting camera/hands:', err);
         if (isMounted) {
-          setErrorMsg(err?.message || 'No se pudo acceder a la cámara');
+          let userFriendlyMessage = 'No se pudo acceder a la cámara.';
+          const rawMsg = err?.message || '';
+          if (err?.name === 'NotAllowedError' || rawMsg.includes('Permission denied') || rawMsg.includes('permission')) {
+            userFriendlyMessage = 'Permiso de cámara no concedido. Puedes usar los controles táctiles o de ratón.';
+          } else if (err?.name === 'NotFoundError' || rawMsg.includes('DevicesNotFoundError')) {
+            userFriendlyMessage = 'No se detectó cámara en tu dispositivo. Puedes usar los controles manuales.';
+          } else if (err?.name === 'NotReadableError') {
+            userFriendlyMessage = 'La cámara está ocupada por otra app.';
+          } else if (rawMsg) {
+            userFriendlyMessage = rawMsg;
+          }
+          setErrorMsg(userFriendlyMessage);
           setIsLoading(false);
         }
       }
@@ -276,7 +326,7 @@ export const HandTracker: React.FC<HandTrackerProps> = ({
         cameraInstanceRef.current = null;
       }
     };
-  }, [enabled, checkSwipe, onGesture]);
+  }, [enabled, onGesture, checkSlide]);
 
   return (
     <div id="gesture-tracker-container" className="relative group">
@@ -351,36 +401,43 @@ export const HandTracker: React.FC<HandTrackerProps> = ({
 
           {/* Error Message */}
           {enabled && errorMsg && (
-            <div className="absolute inset-0 bg-neutral-950/90 p-3 flex flex-col items-center justify-center text-center gap-1.5 text-rose-400">
-              <AlertCircle className="w-6 h-6" />
+            <div className="absolute inset-0 bg-neutral-950/95 p-3 flex flex-col items-center justify-center text-center gap-1.5 text-rose-400">
+              <AlertCircle className="w-5 h-5 shrink-0" />
               <p className="text-[11px] text-neutral-200 leading-tight">{errorMsg}</p>
-              <button
-                onClick={() => {
-                  setErrorMsg(null);
-                  onToggleEnabled();
-                  setTimeout(() => onToggleEnabled(), 100);
-                }}
-                className="text-[10px] text-cyan-400 underline mt-1"
-              >
-                Reintentar
-              </button>
+              <div className="flex items-center gap-2 mt-1">
+                <button
+                  onClick={() => {
+                    setErrorMsg(null);
+                    onToggleEnabled();
+                    setTimeout(() => onToggleEnabled(), 100);
+                  }}
+                  className="text-[10px] px-2 py-0.5 rounded bg-cyan-600/30 text-cyan-300 hover:bg-cyan-600/50 transition cursor-pointer"
+                >
+                  Reintentar
+                </button>
+                <button
+                  onClick={() => {
+                    setErrorMsg(null);
+                    onToggleEnabled();
+                  }}
+                  className="text-[10px] px-2 py-0.5 rounded bg-neutral-800 text-neutral-300 hover:text-white transition cursor-pointer"
+                >
+                  Ocultar cámara
+                </button>
+              </div>
             </div>
           )}
 
-          {/* Swipe Detection Alert Flash */}
-          {swipeFeedback && (
-            <div className="absolute inset-0 bg-cyan-500/30 backdrop-blur-[2px] flex items-center justify-center animate-ping">
-              <div className="bg-neutral-950/90 border border-cyan-400 text-cyan-300 px-3 py-1.5 rounded-full flex items-center gap-1.5 text-xs font-semibold shadow-lg">
-                {swipeFeedback === 'right' ? (
-                  <>
-                    <span>Siguiente</span>
-                    <MoveRight className="w-4 h-4" />
-                  </>
+          {/* Gesture Action Alert Flash */}
+          {actionFeedback && (
+            <div className="absolute inset-0 bg-cyan-500/25 backdrop-blur-[2px] flex items-center justify-center z-10 animate-fade-in">
+              <div className="bg-neutral-950/90 border border-cyan-400 text-cyan-300 px-3 py-1.5 rounded-full flex items-center gap-2 text-xs font-semibold shadow-xl scale-105">
+                <span className="text-base leading-none">{actionFeedback.icon}</span>
+                <span>{actionFeedback.label}</span>
+                {actionFeedback.direction === 'next' ? (
+                  <MoveRight className="w-3.5 h-3.5 text-cyan-400" />
                 ) : (
-                  <>
-                    <MoveLeft className="w-4 h-4" />
-                    <span>Anterior</span>
-                  </>
+                  <MoveLeft className="w-3.5 h-3.5 text-cyan-400" />
                 )}
               </div>
             </div>
@@ -392,10 +449,10 @@ export const HandTracker: React.FC<HandTrackerProps> = ({
           <div className="text-xs font-semibold text-neutral-200 py-1 px-2 rounded-md bg-white/5 truncate">
             {currentGestureName}
           </div>
-          <div className="mt-1 text-[10px] text-neutral-400 flex items-center justify-center gap-2">
-            <span>👉 Mueve a la derecha: Sig.</span>
+          <div className="mt-1.5 text-[10px] text-neutral-400 flex items-center justify-center gap-1.5 flex-wrap">
+            <span className="text-cyan-300 font-medium">👉 Deslizar derecha: Siguiente</span>
             <span>•</span>
-            <span>👈 A la izq: Ant.</span>
+            <span className="text-cyan-300 font-medium">👈 Deslizar izq: Anterior</span>
           </div>
         </div>
       </div>
