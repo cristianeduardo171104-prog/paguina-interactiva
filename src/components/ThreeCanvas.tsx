@@ -274,30 +274,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
         }
       }
 
-      // 4D Planar Hyper-Rotations (XW, ZW, YW planes)
-      let angleXW = 0;
-      let angleZW = 0;
-      let angleYW = 0;
-
-      if (!isFixedRef.current) {
-        const hyperTime = time * 0.45 * Math.max(0.2, rotationSpeed);
-        angleXW = hyperTime * 0.75;
-        angleZW = hyperTime * 0.55;
-        angleYW = hyperTime * 0.35;
-      } else {
-        // Subtle harmonic breathing in 4D when fixed, keeping frontal readability
-        const gentleBreath = Math.sin(time * 0.8) * 0.08;
-        angleXW = gentleBreath;
-        angleZW = gentleBreath * 0.5;
-      }
-
-      const cosXW = Math.cos(angleXW);
-      const sinXW = Math.sin(angleXW);
-      const cosZW = Math.cos(angleZW);
-      const sinZW = Math.sin(angleZW);
-      const cosYW = Math.cos(angleYW);
-      const sinYW = Math.sin(angleYW);
-
+      // Direct 4D-to-3D stereographic projection without 4D hyper-rotations
       const D = 6.0; // 4D hyper-camera focal distance
       const minDenom = 0.6;
 
@@ -308,29 +285,17 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
         const z0 = currentPos4D[i4 + 2];
         const w0 = currentPos4D[i4 + 3];
 
-        // Hyper-rotation in XW plane
-        const x1 = x0 * cosXW - w0 * sinXW;
-        const w1 = x0 * sinXW + w0 * cosXW;
-
-        // Hyper-rotation in ZW plane
-        const z1 = z0 * cosZW - w1 * sinZW;
-        const w2 = z0 * sinZW + w1 * cosZW;
-
-        // Hyper-rotation in YW plane
-        const y1 = y0 * cosYW - w2 * sinYW;
-        const w3 = y0 * sinYW + w2 * cosYW;
-
-        // Stereographic / perspective 4D-to-3D projection
-        const denom = Math.max(minDenom, D - w3);
+        // Stereographic / perspective 4D-to-3D projection (stable 4D coordinates without 4D rotation)
+        const denom = Math.max(minDenom, D - w0);
         const hypScale = D / denom;
 
         const i3 = i * 3;
-        const px = x1 * hypScale;
-        const py = y1 * hypScale;
-        const pz = z1 * hypScale;
-        projPositions[i3] = Number.isFinite(px) ? px : x1;
-        projPositions[i3 + 1] = Number.isFinite(py) ? py : y1;
-        projPositions[i3 + 2] = Number.isFinite(pz) ? pz : z1;
+        const px = x0 * hypScale;
+        const py = y0 * hypScale;
+        const pz = z0 * hypScale;
+        projPositions[i3] = Number.isFinite(px) ? px : x0;
+        projPositions[i3 + 1] = Number.isFinite(py) ? py : y0;
+        projPositions[i3 + 2] = Number.isFinite(pz) ? pz : z0;
       }
 
       if (positionsAttrRef.current) {

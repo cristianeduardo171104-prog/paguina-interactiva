@@ -204,12 +204,12 @@ export const ControlsOverlay: React.FC<ControlsOverlayProps> = ({
             {activeSection === 'numbers' ? (
               <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-xs">
                 <Lock className="w-2.5 h-2.5" />
-                Fijo frontal · Resonancia 4D
+                Fijo frontal
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 shadow-xs">
-                <InfinityIcon className="w-2.5 h-2.5" />
-                Rotación 4D en XW/ZW/YW
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 shadow-xs">
+                <Sparkles className="w-2.5 h-2.5" />
+                Geometría 4D (Sin rotación 4D)
               </span>
             )}
           </div>
@@ -359,7 +359,7 @@ export const ControlsOverlay: React.FC<ControlsOverlayProps> = ({
           {/* Rotation Speed */}
           <div className="space-y-1.5 mb-2">
             <div className="flex justify-between text-xs text-neutral-300 font-medium">
-              <span>Velocidad de Giro 4D / 3D</span>
+              <span>Velocidad de Giro 3D</span>
               <span className="font-mono text-cyan-400">{rotationSpeed.toFixed(1)}x</span>
             </div>
             <input
